@@ -98,7 +98,11 @@ static void connect_to_mqtt(void *ctx);
  ******************************************************************************/
 
 uint8_t active_topic = 0; //no topic defined, boton = 1, temp = 2, dispense = 3
-int humidity = 150;
+char recvd_data[] = ""; //Store received data here
+char old_recvd_data[] = ""; //Store already sent received data here
+int humidity = 101; // Alcohol total variable
+uint16_t current_len = 0;
+
 
 static mdio_handle_t mdioHandle = {.ops = &EXAMPLE_MDIO_OPS};
 static phy_handle_t phyHandle   = {.phyAddr = EXAMPLE_PHY_ADDRESS, .mdioHandle = &mdioHandle, .ops = &EXAMPLE_PHY_OPS};
@@ -113,7 +117,7 @@ static char client_id[40];
 static const struct mqtt_connect_client_info_t mqtt_client_info = {
     .client_id   = (const char *)&client_id[0],
     .client_user = "cano3d",
-    .client_pass = "aio_uNwG23q9JZGdAcWAVnSnsdWTlOiE",
+    .client_pass = "aio_gxLm35pbkZ0y4jKwXf8qzEfs5sc9",
     .keep_alive  = 100,
     .will_topic  = NULL,
     .will_msg    = NULL,
@@ -180,6 +184,7 @@ static void mqtt_incoming_publish_cb(void *arg, const char *topic, u32_t tot_len
 static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t flags)
 {
     int i;
+    current_len=len;
 
     LWIP_UNUSED_ARG(arg);
 
@@ -194,6 +199,32 @@ static void mqtt_incoming_data_cb(void *arg, const u8_t *data, u16_t len, u8_t f
             PRINTF("\\x%02x", data[i]);
         }
     }
+
+    // Do something with received data
+    // Delete previous recvd_data
+
+    if (active_topic == 1){ // ONOFF Button
+
+
+    	}
+
+    if (active_topic == 2){	// Temp setting
+    	for (i = 0 ; i < len ; i++){
+    		recvd_data[i] = data[i]; //Copy recived data into recvd_data
+    	}
+
+
+        }
+
+    if (active_topic == 3){// Alcohol dispense
+    	for (i = 0 ; i < len ; i++){
+    		recvd_data[i] = data[i]; //Copy recived data into recvd_data
+    	}
+
+
+
+        }
+
 
     if (flags & MQTT_DATA_FLAG_LAST)
     {
@@ -312,16 +343,30 @@ static void mqtt_message_published_cb(void *arg, err_t err)
 static void publish_humidity(void *ctx)
 {
     static const char *topic   = "cano3d/feeds/humidity";
-    static const char *message = "150";
+    //static const char *message = "";
+    int i = 0;
+    char buffer[] ="";
 
-    if (active_topic == 3)
-    	humidity--;
+    humidity--;
+
+    sprintf (buffer, "%d", humidity);
+
+    //message = buffer;
 
     LWIP_UNUSED_ARG(ctx);
 
     PRINTF("Going to publish to the topic \"%s\"...\r\n", topic);
 
-    mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)topic);
+    if (active_topic == 3){ // Condition publishing of data only when active topic selected
+    	mqtt_publish(mqtt_client, topic, buffer, strlen(buffer), 1, 0, mqtt_message_published_cb, (void *)topic);
+    }
+
+    for(i = 0 ; i < strlen(buffer); i++){
+    	buffer[i] = '\0';
+    }
+
+
+
 }
 
 
@@ -331,13 +376,21 @@ static void publish_humidity(void *ctx)
 static void publish_thermostat(void *ctx)
 {
     static const char *topic   = "cano3d/feeds/thermostat";
-    static const char *message = "-15";
+    //static const char *message = "-15";
+    static const char *message = recvd_data; //use global variable holding received string instead
+
 
     LWIP_UNUSED_ARG(ctx);
 
     PRINTF("Going to publish to the topic \"%s\"...\r\n", topic);
 
-    mqtt_publish(mqtt_client, topic, message, strlen(message), 1, 0, mqtt_message_published_cb, (void *)topic);
+    mqtt_publish(mqtt_client, topic, message, current_len, 1, 0, mqtt_message_published_cb, (void *)topic);
+
+    //if (active_topic == 2){ // Condition publishing of data only when active topic selected
+
+    //}
+
+
 }
 
 /*!
@@ -349,6 +402,7 @@ static void app_thread(void *arg)
     struct dhcp *dhcp;
     err_t err;
     int i;
+
 
     /* Wait for address from DHCP */
 
@@ -405,21 +459,32 @@ static void app_thread(void *arg)
     }
 
     /* Publish some messages */
-    for (i = 0; i < 5;)
+    for (i = 0; i < 100;)
     {
-        if (connected)
+        if (connected && (strcmp (recvd_data, old_recvd_data) != 0))
+
         {
-            err = tcpip_callback(publish_humidity, NULL);
-            if (err != ERR_OK)
-            {
-                PRINTF("Failed to invoke publishing of a message on the tcpip_thread: %d.\r\n", err);
+
+            if(active_topic == 2){
+                err = tcpip_callback(publish_thermostat, NULL);
+                if (err != ERR_OK)
+                {
+                    PRINTF("Failed to invoke publishing of a message on the tcpip_thread: %d.\r\n", err);
+                }
+
+                strcpy (old_recvd_data, recvd_data);
             }
 
-            err = tcpip_callback(publish_thermostat, NULL);
-            if (err != ERR_OK)
-            {
-                PRINTF("Failed to invoke publishing of a message on the tcpip_thread: %d.\r\n", err);
-            }
+        	if((active_topic == 3)){
+            	err = tcpip_callback(publish_humidity, NULL);
+                if (err != ERR_OK )
+                {
+                    PRINTF("Failed to invoke publishing of a message on the tcpip_thread: %d.\r\n", err);
+                }
+
+                old_recvd_data[0] = recvd_data [0] = 'y'; //For push button we have to change the value, since its always the same value
+        	}
+
             i++;
         }
 
